@@ -116,8 +116,30 @@ String generateDeviceID() {
   return deviceID;
 }
 
+void wifiScanReport(){
+ int n = WiFi.scanNetworks();
+  StaticJsonDocument<1024> doc; // Adjust size for your needs
+  JsonArray wifiList = doc.to<JsonArray>();
+
+  for (int i = 0; i < n; ++i) {
+    JsonObject obj = wifiList.createNestedObject();
+    obj["ssid"] = WiFi.SSID(i);
+    obj["strength"] = WiFi.RSSI(i);
+    obj["protected"] = WiFi.encryptionType(i) != ENC_TYPE_NONE; // true if encrypted
+  }
+
+  String json;
+  serializeJson(wifiList, json);
+   wm.server->send(200, "application/json", json);
+}
+
+void bindServerCallback(){
+  wm.server->on("/wifiscan",wifiScanReport);
+}
+
 void setupWiFi() {
   // WiFi.mode(WIFI_STA);  // explicitly set mode, esp defaults to STA+AP
+  wm.setCaptivePortalEnable(false);
   wm.setConfigPortalBlocking(false);
   wm.setConnectTimeout(20);
   wm.setWiFiAutoReconnect(true);
@@ -127,6 +149,7 @@ void setupWiFi() {
   wm.addParameter(&custom_mqtt_port);
   wm.addParameter(&custom_mqtt_username);
   wm.addParameter(&custom_mqtt_password);
+  wm.setWebServerCallback(bindServerCallback);
   wm.setSaveConfigCallback(saveConfigCallback);
   
   //automatically connect using saved credentials if they exist
