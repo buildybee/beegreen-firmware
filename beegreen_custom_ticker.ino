@@ -356,6 +356,28 @@ void publishMsg(const char *topic, const char *payload,bool retained){
     }
 }
 
+void publishPowerStatusIfAny(){
+  if (rtc.getPowerFail()) {
+    DateTime pd = rtc.getPowerDown();
+    DateTime pu = rtc.getPowerUp();
+
+    char ts[20];
+    char payload[32];
+
+    snprintf(ts, sizeof(ts), "%04d-%02d-%02d %02d:%02d:%02d",
+             pd.year(), pd.month(), pd.day(), pd.hour(), pd.minute(), pd.second());
+    snprintf(payload, sizeof(payload), "off:%s", ts);
+    publishMsg(POWER_STATUS_TOPIC, payload, true);
+
+    snprintf(ts, sizeof(ts), "%04d-%02d-%02d %02d:%02d:%02d",
+             pu.year(), pu.month(), pu.day(), pu.hour(), pu.minute(), pu.second());
+    snprintf(payload, sizeof(payload), "on:%s", ts);
+    publishMsg(POWER_STATUS_TOPIC, payload, true);
+
+    rtc.clearPowerFail();
+  }
+}
+
 static inline void subscribeMsg(const char *topic) {
   char fullTopic[64];
   const char* suf = strrchr(topic, '/');
@@ -500,6 +522,7 @@ void connectNetworkStack() {
       subscribeMsg(RESTART);
       // Publish immediate online with retain so status reflects current state
       publishMsg(BEEGREEN_STATUS, "online", true);
+      publishPowerStatusIfAny();
       deviceState.radioStatus = ConnectivityStatus::SERVERCONNECTED;
       return;
     }

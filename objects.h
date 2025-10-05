@@ -18,6 +18,7 @@
 #define SET_SCHEDULE "set_schedule"
 
 #define CURRENT_CONSUMPTION "current_consumption"
+#define POWER_STATUS_TOPIC "power_status"
 #define GET_UPDATE_REQUEST "firmware_upgrade"
 #define REQUEST_ALL_SCHEDULES "get_schedules"
 #define GET_ALL_SCHEDULES "get_schedules_response"
