@@ -32,6 +32,8 @@ bool hasAht20 = false;
 #ifdef INA219_I2C_ADDR
 bool hasIna219 = false;
 #endif
+String deviceId;
+
 
 bool picker = false;
 bool resetTrigger = false;
@@ -93,9 +95,6 @@ void doubleClickHandler() {
   if (resetInitiatorMode) {
       Serial.println("Double-click in reset mode - wiping credentials and restarting...");
       
-      // Wipe WiFi and MQTT credentials
-      wm.resetSettings();
-      
       // Clear EEPROM
       EEPROM.begin(sizeof(mqttDetails) + 10);
       for (int i = 0; i < sizeof(mqttDetails) + 10; i++) {
@@ -106,7 +105,8 @@ void doubleClickHandler() {
       
       // Graceful shutdownss
       gracefullShutownprep();
-      
+      // Wipe WiFi and MQTT credentials
+      wm.resetSettings();
       // Restart device
       delay(1000);
       ESP.restart();
@@ -140,18 +140,30 @@ void buttonISR()
 
 // Method to generate the string in the format "prefix_chipID_last4mac"
 String generateDeviceID() {
-  // Get the chip ID
   String chipID = String(WIFI_getChipId(),HEX);
   chipID.toUpperCase();
-  // Get the MAC address
   String macAddress = WiFi.macAddress();
-  macAddress.replace(":", ""); // Remove colons from the MAC address
-  // Extract the last 4 characters of the MAC address
+  macAddress.replace(":", "");
   String last4Mac = macAddress.substring(macAddress.length() - 4);
-  // Combine the prefix, chip ID, and last 4 MAC characters
-  String deviceID = String("BeeGreen") + "_" + chipID + "_" + last4Mac;
+  String deviceID = chipID + "-" + last4Mac;
   return deviceID;
 }
+
+// Check if received topic's last segment matches the last segment of a constant
+static inline bool topicMatchesSuffix(const char* received, const char* fullConst) {
+  const char* r = strrchr(received, '/');
+  r = r ? r + 1 : received;
+  const char* s = strrchr(fullConst, '/');
+  s = s ? s + 1 : fullConst;
+  return strcmp(r, s) == 0;
+}
+
+// Method to generate WiFi AP SSID in format: BEEGREEN-<chipID><last4mac>
+String generateApSSID() {
+  return String("BEEGREEN-") + generateDeviceID();
+}
+
+// remove per-device topic helpers
 
 void wifiScanReport(){
  int n = WiFi.scanNetworks();
@@ -192,7 +204,7 @@ void setupWiFi() {
   //automatically connect using saved credentials if they exist
   //If connection fails it starts an access point with the specified name
 
-  if (wm.autoConnect(generateDeviceID().c_str())) {
+  if (wm.autoConnect(generateApSSID().c_str())) {
     Serial.println("WiFi connected...yeey :)");
     deviceState.radioStatus = ConnectivityStatus::LOCALCONNECTED;
     checkForOTAUpdate();
@@ -214,39 +226,33 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   payloadStr[length] = '\0';
   Serial.println(payloadStr);
 
-  if (strcmp(topic, PUMP_CONTROL_TOPIC) == 0) {
+  if (topicMatchesSuffix(topic, PUMP_CONTROL_TOPIC)) {
     int duration = atoi(payloadStr);
 
     if (duration == 0) {
-      // If payload is "0", stop the pump.
       pumpStop();
     } else if (duration > 0) {
-      // If payload is a positive number, start the pump with that duration.
       pumpStart();
       rtc.setManualStopTime(duration);
     }
-  } else if (strcmp(topic, SET_SCHEDULE) == 0) {
+  } else if (topicMatchesSuffix(topic, SET_SCHEDULE)) {
     onSetScheduleCallback(payloadStr);
-    // Only apply the changes immediately if the pump is not running.
     if (!digitalRead(MOSFET_PIN)) {
       updateAndPublishNextAlarm();
     }
-  } else if (strcmp(topic, REQUEST_ALL_SCHEDULES) == 0) {
+  } else if (topicMatchesSuffix(topic, REQUEST_ALL_SCHEDULES)) {
     WateringSchedules allSchedules;
     rtc.getSchedules(allSchedules);
 
-    // This JSON document is for building the array. 512 bytes is a safe size.
     DynamicJsonDocument doc(512);
     JsonArray scheduleArray = doc.to<JsonArray>();
 
-    // A small buffer to build each schedule string (max 18 bytes needed)
     char schedule_string[20]; 
     bool schedulesModified = false;
 
     for (int i = 0; i < MAX_SCHEDULES; i++) {
         auto& item = allSchedules.items[i];
 
-        // 1. Validate and fix any corrupt data in RTC memory
         if (item.hour > 23 || item.minute > 59 || item.daysOfWeek > 127) {
             item.hour = 0;
             item.minute = 0;
@@ -256,9 +262,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
             schedulesModified = true;
         }
 
-        // 2. Add only valid AND enabled schedules to our response array
         if (item.enabled) {
-            // Format: index:hour:minute:duration:daysOfWeek
             snprintf(schedule_string, sizeof(schedule_string), "%d:%d:%d:%u:%d",
                      i,
                      item.hour,
@@ -266,30 +270,26 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
                      item.duration_sec,
                      item.daysOfWeek);
             
-            scheduleArray.add(schedule_string);
+                     scheduleArray.add(schedule_string);
         }
     }
 
-    // 3. If data was fixed, write the clean version back to the RTC
     if (schedulesModified) {
         Serial.println("Found and fixed corrupt schedule data in RTC RAM.");
         rtc.setSchedules(allSchedules);
     }
 
-    // 4. Serialize the final JSON array into a single buffer and publish
-    char payload_buffer[256]; // Safely fits the max possible payload (~202 bytes)
+    char payload_buffer[256];
     serializeJson(doc, payload_buffer, sizeof(payload_buffer));
-    
-    mqttClient.publish(GET_ALL_SCHEDULES, payload_buffer);
-  } else if (strcmp(topic, GET_UPDATE_REQUEST) == 0) {
+    publishMsg(GET_ALL_SCHEDULES, payload_buffer, false);
+  } else if (topicMatchesSuffix(topic, GET_UPDATE_REQUEST)) {
     if (atoi(payloadStr) == 1) {
       firmwareUpdate = true;
     }
-  } else if (strcmp(topic, RESTART) == 0) {
+  } else if (topicMatchesSuffix(topic, RESTART)) {
     gracefullShutownprep();
     ESP.restart();
-  }
-   else {
+  } else {
     Serial.print("Topic action not found");
   }
 }
@@ -335,17 +335,33 @@ bool parseSchedulePayload(const char* payload, int& index, ScheduleItem& item) {
 
 void publishMsg(const char *topic, const char *payload,bool retained){
   if (mqttClient.connected()) {
+      // Prefix deviceId to the topic using the last segment as suffix
+      char fullTopic[64];
+      const char* suf = strrchr(topic, '/');
+      suf = suf ? suf + 1 : topic;
+      snprintf(fullTopic, sizeof(fullTopic), "%s/%s", deviceId.c_str(), suf);
+
       String jsonPayload = "{";
-      jsonPayload += "\"payload\":\"";
+      jsonPayload += "\"payload\":";
+      jsonPayload += "\"";
       jsonPayload += payload;
       jsonPayload += "\",";
-      jsonPayload += "\"timestamp\":\"";
+      jsonPayload += "\"timestamp\":";
+      jsonPayload += "\"";
       jsonPayload += rtc.getCurrentTimestamp();
       jsonPayload += "\"";
       jsonPayload += "}";
 
-      mqttClient.publish(topic, jsonPayload.c_str(),retained); // Publish the JSON payload
+      mqttClient.publish(fullTopic, jsonPayload.c_str(),retained);
     }
+}
+
+static inline void subscribeMsg(const char *topic) {
+  char fullTopic[64];
+  const char* suf = strrchr(topic, '/');
+  suf = suf ? suf + 1 : topic;
+  snprintf(fullTopic, sizeof(fullTopic), "%s/%s", deviceId.c_str(), suf);
+  mqttClient.subscribe(fullTopic);
 }
 
 bool readAHT20() {
@@ -406,10 +422,6 @@ void pumpStop() {
     deviceState.pumpRunning = false;
     publishMsg(PUMP_STATUS_TOPIC, "off",true);
 
-    // Always recalculate the next alarm when the pump stops.
-    // This correctly resumes the schedule after both manual and automatic stops,
-    // and it will apply any schedule updates that were received mid-run.
-    // Recalculate and publish the next due time.
     updateAndPublishNextAlarm();
   } else {
     Serial.println("Pump already in idle state");
@@ -471,17 +483,22 @@ void connectNetworkStack() {
   }
 
   if (WiFi.status() == WL_CONNECTED && !mqttClient.connected()) {
-    // Prepare Last Will message with device power-on time in publishMsg format
+    const char* clientId = deviceId.length() ? deviceId.c_str() : "beegreen";
+    // Build LWT topic (deviceId/suffix of BEEGREEN_STATUS) and payload
+    char willTopic[64];
+    const char* wsuf = strrchr(BEEGREEN_STATUS, '/');
+    wsuf = wsuf ? wsuf + 1 : BEEGREEN_STATUS;
+    snprintf(willTopic, sizeof(willTopic), "%s/%s", deviceId.c_str(), wsuf);
     String willPayload = String("{\"payload\":\"offline\",\"timestamp\":\"") + deviceBootTime + "\"}";
-    String clientId = generateDeviceID();
-    if (mqttClient.connect(clientId.c_str(), mqttDetails.mqtt_user, mqttDetails.mqtt_password,
-                           BEEGREEN_STATUS, 1, true, willPayload.c_str())) {
-      mqttClient.subscribe(PUMP_CONTROL_TOPIC);
-      mqttClient.subscribe(SET_SCHEDULE);
-      mqttClient.subscribe(REQUEST_ALL_SCHEDULES);
-      mqttClient.subscribe(GET_UPDATE_REQUEST);
-      mqttClient.subscribe(RESTART);
-      // Publish immediate online status with retained flag so STATUS reflects current state
+
+    if (mqttClient.connect(clientId, mqttDetails.mqtt_user, mqttDetails.mqtt_password,
+                           willTopic, 1, true, willPayload.c_str())) {
+      subscribeMsg(PUMP_CONTROL_TOPIC);
+      subscribeMsg(SET_SCHEDULE);
+      subscribeMsg(REQUEST_ALL_SCHEDULES);
+      subscribeMsg(GET_UPDATE_REQUEST);
+      subscribeMsg(RESTART);
+      // Publish immediate online with retain so status reflects current state
       publishMsg(BEEGREEN_STATUS, "online", true);
       deviceState.radioStatus = ConnectivityStatus::SERVERCONNECTED;
       return;
@@ -501,11 +518,9 @@ void connectNetworkStack() {
 }
 
 void updateAndPublishNextAlarm() {
-  // Set the next hardware alarm based on the schedule
   bool alarmWasSet = rtc.setNextAlarm();
   
   if (alarmWasSet) {
-    // Get the time that was just set
     DateTime nextAlarm = rtc.getNextDueAlarm();
     
     char buffer[20];
@@ -513,11 +528,9 @@ void updateAndPublishNextAlarm() {
              nextAlarm.year(), nextAlarm.month(), nextAlarm.day(),
              nextAlarm.hour(), nextAlarm.minute(), nextAlarm.second());
              
-    // Publish the message with the retain flag set to true
-    mqttClient.publish(NEXT_SCHEDULE, buffer, true);
+    publishMsg(NEXT_SCHEDULE, buffer, true);
   } else {
-    // If no alarms are set, publish an empty string to clear the retained message
-    mqttClient.publish(NEXT_SCHEDULE, "", true);
+    publishMsg(NEXT_SCHEDULE, "", true);
   }
 }
 
@@ -640,6 +653,7 @@ void setup() {
   espClient.setInsecure();
   setupWiFi();
   eeprom_read();
+  deviceId = generateDeviceID();
   Serial.print("Local IP: ");
   Serial.println(WiFi.localIP());
   Serial.println("Mqtt Details:");

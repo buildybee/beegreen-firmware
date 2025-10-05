@@ -8,22 +8,22 @@
 #define UPDATEURL "https://raw.githubusercontent.com/buildybee/beegreen-firmware-upgrade/refs/heads/main/esp7ina219.txt"
 #define FIRMWAREDOWNLOAD "https://raw.githubusercontent.com/buildybee/beegreen-firmware-upgrade/refs/heads/main/firmware/esp7ina219/"
 
-// mqtt topics
-#define HEARBEAT_TOPIC "beegreen/heartbeat"
-#define BEEGREEN_STATUS "beegreen/status"
+// mqtt topics (suffix only; deviceId will prefix at runtime as "<deviceId>/<suffix>")
+#define HEARBEAT_TOPIC "heartbeat"
+#define BEEGREEN_STATUS "status"
 
-#define PUMP_CONTROL_TOPIC "beegreen/pump_trigger"
-#define PUMP_STATUS_TOPIC "beegreen/pump_status"
+#define PUMP_CONTROL_TOPIC "pump_trigger"
+#define PUMP_STATUS_TOPIC "pump_status"
 
-#define SET_SCHEDULE "beegreen/set_schedule"
+#define SET_SCHEDULE "set_schedule"
 
-#define CURRENT_CONSUMPTION "beegreen/current_consumption"
-#define GET_UPDATE_REQUEST "beegreen/firmware_upgrade"
-#define REQUEST_ALL_SCHEDULES "beegreen/get_schedules"
-#define GET_ALL_SCHEDULES "beegreen/get_schedules_response"
-#define NEXT_SCHEDULE "beegreen/next_schedule_due"
+#define CURRENT_CONSUMPTION "current_consumption"
+#define GET_UPDATE_REQUEST "firmware_upgrade"
+#define REQUEST_ALL_SCHEDULES "get_schedules"
+#define GET_ALL_SCHEDULES "get_schedules_response"
+#define NEXT_SCHEDULE "next_schedule_due"
 
-#define RESTART "beegreen/restart"
+#define RESTART "restart"
 
 // I2C Pins
 #define SDA_PIN 5
