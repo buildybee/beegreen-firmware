@@ -374,21 +374,20 @@ void publishPowerStatusIfAny(){
     DateTime pd = rtc.getPowerDown();
     DateTime pu = rtc.getPowerUp();
 
-    char ts[20];
-    char payload[32];
+    char ton[20];
+    char toff[20];
+    char payload[41];
 
-    snprintf(ts, sizeof(ts), "%04d-%02d-%02d %02d:%02d:%02d",
+    snprintf(toff, sizeof(toff), "%04d-%02d-%02d %02d:%02d:%02d",
              pd.year(), pd.month(), pd.day(), pd.hour(), pd.minute(), pd.second());
-    snprintf(payload, sizeof(payload), "off:%s", ts);
-    publishMsg(POWER_STATUS_TOPIC, payload, true);
-
-    snprintf(ts, sizeof(ts), "%04d-%02d-%02d %02d:%02d:%02d",
+    snprintf(ton, sizeof(ton), "%04d-%02d-%02d %02d:%02d:%02d",
              pu.year(), pu.month(), pu.day(), pu.hour(), pu.minute(), pu.second());
-    snprintf(payload, sizeof(payload), "on:%s", ts);
+    snprintf(payload, sizeof(payload), "off:%s,on:%s", toff, ton);
     publishMsg(POWER_STATUS_TOPIC, payload, true);
-
-    rtc.clearPowerFail();
+  } else {
+    publishMsg(POWER_STATUS_TOPIC, "no power failure detected", true);
   }
+  rtc.clearPowerFail();
 }
 
 static inline void subscribeMsg(const char *topic) {
