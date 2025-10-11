@@ -732,6 +732,7 @@ void setup() {
   setLedColor.start();
   alarmHandler.start();
   loopMqtt.start();
+  updateAndPublishNextAlarm();
 }
 
 void loop() {
