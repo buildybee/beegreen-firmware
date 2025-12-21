@@ -3,7 +3,6 @@
 #include <WiFiManager.h>        // https://github.com/tzapu/WiFiManager
 #include <PubSubClient.h>       // https://pubsubclient.knolleary.net/api 
 #include <Adafruit_NeoPixel.h>  // https://github.com/adafruit/Adafruit_NeoPixel
-#include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>               
 #include <EEPROM.h>            // Use LittleFS instead of SPIFFS
 #include <ArduinoJson.h>
@@ -38,7 +37,7 @@ String deviceId;
 bool picker = false;
 bool resetTrigger = false;
 bool resetInitiatorMode = false;
-bool mqttloop,firmwareUpdate,firmwareUpdateOngoing;
+bool mqttloop,firmwareUpdateOngoing;
 float current  = 0;
 unsigned long resetModeStartTime = 0;
 String deviceBootTime = "";
@@ -219,7 +218,6 @@ void setupWiFi() {
   if (wm.autoConnect(generateApSSID().c_str())) {
     Serial.println("WiFi connected...yeey :)");
     deviceState.radioStatus = ConnectivityStatus::LOCALCONNECTED;
-    checkForOTAUpdate();
     
   } else {
     Serial.println("Configportal running");
@@ -294,10 +292,21 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     char payload_buffer[256];
     serializeJson(doc, payload_buffer, sizeof(payload_buffer));
     publishMsg(GET_ALL_SCHEDULES, payload_buffer, false);
-  } else if (topicMatchesSuffix(topic, GET_UPDATE_REQUEST)) {
-    if (atoi(payloadStr) == 1) {
-      firmwareUpdate = true;
+  } else if (topicMatchesSuffix(topic, OTA_URL_TOPIC)) {
+    String firmwareUrl(payloadStr);
+    firmwareUrl.trim();
+
+    if (firmwareUrl.length() == 0) {
+      Serial.println("Empty OTA URL payload, ignoring.");
+      return;
     }
+
+    if (digitalRead(MOSFET_PIN)) {
+      Serial.println("Pump running - OTA update skipped.");
+      return;
+    }
+
+    performOtaUpdate(firmwareUrl.c_str());
   } else if (topicMatchesSuffix(topic, RESTART)) {
     gracefullShutownprep();
     ESP.restart();
@@ -462,7 +471,7 @@ Timer tankEmptyAnnounceAfterStart(3000, Timer::ONESHOT, []() {
 });
 
 void pumpStart(){
-  if (!digitalRead(MOSFET_PIN) && (!firmwareUpdate)) {
+  if (!digitalRead(MOSFET_PIN) && (!firmwareUpdateOngoing)) {
     Serial.println("Starting pump");
     digitalWrite(MOSFET_PIN, HIGH);
     deviceState.pumpRunning = true;
@@ -496,52 +505,25 @@ void pumpStop() {
   }
 }
 
-void checkForOTAUpdate() {
-  HTTPClient http;
-  Serial.println("Checking for OTA updates...");
-
-  String updateURL = String(UPDATEURL) + "?nocache=" + String(millis()); // Force fresh request
-  if (http.begin(espClient, updateURL)) { 
-    Serial.println("Connected to update server...");
-    http.setTimeout(5000); // Set 5-second timeout
-
-    int httpCode = http.GET(); // Perform GET request to fetch the version file
-    if (httpCode == HTTP_CODE_OK) {
-      String fetchedFirmwareVersionString = http.getString(); // Store the String object
-      fetchedFirmwareVersionString.trim(); // Trim whitespace
-
-      Serial.println("Fetched Firmware Version: " + fetchedFirmwareVersionString);
-      Serial.println("System Firmware Version: " + String(FIRMWARE_VERSION));
-      
-
-      // Compare fetched version with current firmware version
-      if (v1GreaterThanV2(fetchedFirmwareVersionString.c_str(),FIRMWARE_VERSION)) {
-        firmwareUpdateOngoing = true;
-        Serial.println("Update available. Starting OTA...");
-        mqttClient.disconnect(); // Ensure MQTT is disconnected during OTA
-        String firmwareURL = String(FIRMWAREDOWNLOAD)+ fetchedFirmwareVersionString + ".bin";
-        t_httpUpdate_return ret = ESPhttpUpdate.update(espClient, firmwareURL);
-
-        if (ret == HTTP_UPDATE_OK) {
-          Serial.println("OTA Update Successful");
-          gracefullShutownprep();
-          ESP.restart();
-        } else {
-            Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
-          firmwareUpdateOngoing = false;
-        }
-      } else {
-        Serial.println("No update available.");
-      }
-    } else {
-      Serial.printf("Failed to fetch update file. HTTP code: %d\n", httpCode);
-    }
-
-    http.end(); // End the HTTP connection
-  } else {
-    Serial.println("Unable to connect to OTA update server.");
+void performOtaUpdate(const char* url) {
+  if (url == nullptr || url[0] == '\0') {
+    Serial.println("Invalid OTA URL.");
+    return;
   }
-  http.end();
+
+  Serial.printf("Starting OTA from URL: %s\n", url);
+  firmwareUpdateOngoing = true;
+  mqttClient.disconnect(); // Avoid MQTT traffic during OTA
+
+  t_httpUpdate_return ret = ESPhttpUpdate.update(espClient, url);
+
+  if (ret == HTTP_UPDATE_OK) {
+    Serial.println("OTA Update Successful");
+    gracefullShutownprep();
+  } else {
+    Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+  }
+  ESP.restart();
 }
 
 void connectNetworkStack() {
@@ -564,11 +546,12 @@ void connectNetworkStack() {
       subscribeMsg(PUMP_CONTROL_TOPIC);
       subscribeMsg(SET_SCHEDULE);
       subscribeMsg(REQUEST_ALL_SCHEDULES);
-      subscribeMsg(GET_UPDATE_REQUEST);
+      subscribeMsg(OTA_URL_TOPIC);
       subscribeMsg(RESTART);
       subscribeMsg(RESET_SETTINGS);
       // Publish immediate online with retain so status reflects current state
       publishMsg(BEEGREEN_STATUS, "online", true);
+      publishMsg(VERSION_TOPIC, FIRMWARE_VERSION, true);
       publishPowerStatusIfAny();
       // Publish (and re-evaluate) the next schedule once connected, but only if pump is idle
       if (!digitalRead(MOSFET_PIN)) {
@@ -610,14 +593,22 @@ void updateAndPublishNextAlarm() {
 
 Timer heartBeat(HEARTBEAT_TIMER,Timer::SCHEDULER,[]() {
     if (mqttClient.connected()) {
-      String csv = String(FIRMWARE_VERSION);
-    if (readAHT20()) {
-      csv += "," + String(deviceState.temp, 2) + "," + String(deviceState.humidity, 2);
-    }
-    if (readINA219()) {
-      csv += "," + String(deviceState.currentConsumption, 2);
-    }
-    publishMsg(HEARBEAT_TOPIC, csv.c_str(), true);
+      String csv;
+      bool hasField = false;
+      if (readAHT20()) {
+        csv += String(deviceState.temp, 2);
+        csv += ",";
+        csv += String(deviceState.humidity, 2);
+        hasField = true;
+      }
+      if (readINA219()) {
+        if (hasField) {
+          csv += ",";
+        }
+        csv += String(deviceState.currentConsumption, 2);
+        hasField = true;
+      }
+      publishMsg(HEARBEAT_TOPIC, csv.c_str(), true);
   }
 });
 
@@ -709,7 +700,6 @@ void setup() {
     wipeCredentialsAndRestart();
   }
 
-  firmwareUpdate = false;
   mqttloop = true;
   firmwareUpdateOngoing = false;
   pinMode(MOSFET_PIN, OUTPUT);
@@ -797,10 +787,5 @@ void loop() {
   if(mqttloop) {
     connectNetworkStack();
     mqttloop = false;
-  }
-
-  if ((firmwareUpdate) && (!digitalRead(MOSFET_PIN))) {
-    checkForOTAUpdate();
-    firmwareUpdate = false;
   }
 }

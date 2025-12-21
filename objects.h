@@ -4,10 +4,6 @@
 #define PRODUCT_ID "esp7ina219"
 #define FIRMWARE_VERSION "1.3.4"
 
-// Define the server and paths for OTA
-#define UPDATEURL "https://raw.githubusercontent.com/buildybee/beegreen-firmware-upgrade/refs/heads/main/esp7ina219.txt"
-#define FIRMWAREDOWNLOAD "https://raw.githubusercontent.com/buildybee/beegreen-firmware-upgrade/refs/heads/main/firmware/esp7ina219/"
-
 // mqtt topics (suffix only; deviceId will prefix at runtime as "<deviceId>/<suffix>")
 #define HEARBEAT_TOPIC "heartbeat"
 #define BEEGREEN_STATUS "status"
@@ -19,7 +15,8 @@
 
 #define CURRENT_CONSUMPTION "current_consumption"
 #define POWER_STATUS_TOPIC "power_status"
-#define GET_UPDATE_REQUEST "firmware_upgrade"
+#define OTA_URL_TOPIC "update_firmware_url"
+#define VERSION_TOPIC "version"
 #define REQUEST_ALL_SCHEDULES "get_schedules"
 #define GET_ALL_SCHEDULES "get_schedules_response"
 #define NEXT_SCHEDULE "next_schedule_due"
@@ -49,7 +46,7 @@
 #define LED_BRIGHTNESS 100
 #define POWER_CONSUMPTION_THRESHOLD 50
 #define PING_INTERVAL 6000
-#define CURRENT_CONSUMPTION_THRESHOLD 1200
+#define CURRENT_CONSUMPTION_THRESHOLD 10
 
 // Button timing constants
 #define BUTTON_DEBOUNCE_TIME 80         // Button debounce time in milliseconds
