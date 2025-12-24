@@ -1,0 +1,46 @@
+name: Release Firmware
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+
+    - name: Set up Arduino CLI
+      uses: arduino/setup-arduino-cli@v2
+
+    - name: Install ESP8266 platform
+      run: arduino-cli core install esp8266:esp8266
+
+    - name: Install libraries
+      run: |
+        arduino-cli lib install "WiFiManager"
+        arduino-cli lib install "PubSubClient"
+        arduino-cli lib install "Adafruit NeoPixel"
+        arduino-cli lib install "ArduinoJson"
+        arduino-cli lib install "Adafruit INA219"
+        arduino-cli lib install "DoubleResetDetect"
+
+    - name: Compile sketch
+      run: |
+        arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2 --output-dir build beegreen_custom_ticker.ino
+
+    - name: Rename artifact
+      run: |
+        mv build/beegreen_custom_ticker.ino.bin build/beegreen_custom_ticker-${{ github.ref_name }}.bin
+
+    - name: Upload firmware to release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./build/beegreen_custom_ticker-${{ github.ref_name }}.bin
+        asset_name: beegreen_custom_ticker-${{ github.ref_name }}.bin
+        asset_content_type: application/octet-stream 
